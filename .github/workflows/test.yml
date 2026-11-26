@@ -1,0 +1,35 @@
+name: test
+on:
+  push:
+  pull_request:
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CPU-only PyTorch and the rest
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
+          pip install numpy matplotlib pytest
+      - name: Tests
+        run: python -m pytest -q test_nanomoe.py
+      - name: Every mode runs (tiny config)
+        run: |
+          python nanomoe.py --mode compare --steps 50 --n_layer 2 --n_embd 64 --expert_hidden 32 --block_size 64 \
+            --kv_rank 16 --rope_dim 8 --variants dense,moe-bias --out out/ci.pt
+          python nanomoe.py --mode heatmap --out out/ci_moe-bias.pt
+          python nanomoe.py --mode sample --out out/ci_moe-bias.pt
