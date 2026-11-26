@@ -55,6 +55,7 @@ class Config:
     router_skew: float = 0.0     # fixed head start for expert 0 (to provoke routing collapse)
     mtp: int = 0                 # 1 = also predict the token after next (DeepSeek-V3 multi-token prediction)
     mtp_coef: float = 0.3
+    dropout: float = 0.0         # residual dropout (0 = the course's model; 0.2 for long runs on 1 MB of text)
     batch_size: int = 32
     steps: int = 3000
     lr: float = 3e-3
@@ -240,10 +241,11 @@ class Block(nn.Module):
         self.n1, self.n2 = RMSNorm(c.n_embd), RMSNorm(c.n_embd)
         self.attn = MLA(c) if c.attn == "mla" else Attention(c)
         self.ffn = MoE(c) if (ffn or c.ffn) == "moe" else Expert(c.n_embd, dense_width(c))
+        self.drop = nn.Dropout(c.dropout)
 
     def forward(self, x):
-        x = x + self.attn(self.n1(x))
-        return x + self.ffn(self.n2(x))
+        x = x + self.drop(self.attn(self.n1(x)))
+        return x + self.drop(self.ffn(self.n2(x)))
 
 
 class GPT(nn.Module):
@@ -376,10 +378,10 @@ def train(c, log=True):
         opt, lambda s: min(1, (s + 1) / warm) * (0.1 + 0.45 * (1 + math.cos(math.pi * min(s, c.steps) / c.steps))))
     gen, t0, curve = torch.Generator().manual_seed(c.seed), time.time(), []
     for step in range(c.steps + 1):
-        if step % max(1, c.steps // 10) == 0 or step == c.steps:
+        if step % max(1, c.steps // 30) == 0 or step == c.steps:
             val, loads = evaluate(model, va, device, batches=50 if step == c.steps else 10)
             curve.append((step, round(val, 4)))
-            if log:
+            if log and (step % max(1, c.steps // 10) == 0 or step == c.steps):
                 ml = " ".join(f"{s['max_load']:.2f}" for s in loads)
                 print(f"step {step:5d}  val {val:.3f}" + (f"  max load {ml}" if ml else "")
                       + f"  {time.time() - t0:.0f}s", flush=True)
